@@ -4,6 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>CTG explained risk</title>
+<link rel="icon" href="favicon.ico" sizes="any">
+<link rel="icon" href="logo.png" type="image/png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
 <script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -14,7 +17,7 @@
     /* Palette shared with the OR-explorer prototype: warm neutrals and a
        red/green force pair rather than the SHAP pink/blue. */
     --up:#e34948; --down:#008300; --ink:#0b0b0b; --mut:#52514e; --line:#e6e5e1;
-    --surface:#fcfcfb; --warm:#f0efec; --ink3:#8a8880; --fhr:#c2185b;
+    --surface:#fcfcfb; --warm:#f0efec; --panel:#ffffff; --sel:#2a78d6; --ink2:#52514e; --ink3:#8a8880; --fhr:#c2185b;
   }
   *{box-sizing:border-box}
   body{margin:0;font:15px/1.5 Roboto,-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
@@ -34,11 +37,27 @@
   select,input[type=number]{width:100%;padding:7px 9px;font-size:15px;border:1px solid var(--line);
     border-radius:8px;background:#fff;color:var(--ink)}
   input[type=range]{width:100%}
-  #picker{height:280px;overflow:auto;border:1px solid var(--line);border-radius:8px;background:#fff}
-  #picker div{padding:5px 9px;cursor:pointer;white-space:pre;
-    font:14px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;font-variant-numeric:tabular-nums}
-  #picker div:hover{background:rgba(128,128,128,.14)}
-  #picker div.sel{background:rgba(255,0,81,.14);font-weight:700}
+  #pills{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 10px}
+  .pill{border:1px solid var(--line);background:var(--panel);color:var(--ink2);
+    border-radius:999px;padding:6px 13px;font-size:13.5px;font-weight:600;cursor:pointer}
+  .pill:hover{border-color:var(--ink3)}
+  .pill.on{background:var(--sel);border-color:var(--sel);color:#fff}
+  #idfilter{width:100%;padding:9px 11px;font-size:14.5px;border:1px solid var(--line);
+    border-radius:10px;background:var(--panel);color:var(--ink);margin-bottom:10px}
+  #picker{max-height:420px;overflow:auto;border:1px solid var(--line);
+    border-radius:12px;background:var(--panel)}
+  /* One line per record: dot, id, then the facts that decide whether it is
+     worth opening -- cord pH and how long the trace runs. */
+  #picker .row{display:flex;align-items:center;gap:10px;padding:9px 12px;
+    cursor:pointer;border-bottom:1px solid var(--line);font-size:15px}
+  #picker .row:last-child{border-bottom:0}
+  #picker .row:hover{background:var(--warm)}
+  #picker .dot{width:9px;height:9px;border-radius:50%;flex:none}
+  #picker .rid{font-weight:700;font-variant-numeric:tabular-nums}
+  #picker .meta{margin-left:auto;color:var(--mut);font-size:13.5px;
+    font-variant-numeric:tabular-nums;white-space:nowrap}
+  #picker .row.sel{background:var(--sel);color:#fff}
+  #picker .row.sel .meta{color:#eaf2ff}
   .cap{font-size:13.5px;color:var(--mut);margin:6px 0 0}
   /* Columns size to their contents. Every cell is nowrap so a column is exactly
      as wide as its widest value, except the description, which wraps and takes
@@ -70,21 +89,21 @@
     <input type="number" id="prev" min="0.01" max="90" step="0.1" value="18.1">
     <p class="cap" id="basecap"></p>
 
-    <h3>Trace</h3>
-    <label for="outcome">Outcome</label>
-    <select id="outcome">
-      <option value="all">All</option>
-      <option value="1">Acidaemic (pH &lt; 7.20)</option>
-      <option value="0">Normal</option>
-    </select>
-    <label for="sort">Sort by</label>
+    <h3>Recording</h3>
+    <div id="pills">
+      <button class="pill on" data-f="all">All</button>
+      <button class="pill" data-f="705">pH&lt;7.05</button>
+      <button class="pill" data-f="720">pH&lt;7.20</button>
+      <button class="pill" data-f="norm">Normal</button>
+    </div>
+    <input type="search" id="idfilter" placeholder="Filter by record id…">
     <select id="sort">
-      <option value="hi">High → low</option>
-      <option value="lo">Low → high</option>
       <option value="id">Record id</option>
+      <option value="hi">Odds ratio: high → low</option>
+      <option value="lo">Odds ratio: low → high</option>
     </select>
-    <p class="cap" id="pickcap"></p>
     <div id="picker"></div>
+    <p class="cap" id="pickcap"></p>
 
   </div>
 
@@ -169,14 +188,31 @@ async function boot(){
   const cu=document.createElement('option'); cu.value='custom'; cu.textContent='Custom'; ps.appendChild(cu);
   ps.onchange = ()=>{ if(ps.value!=='custom'){ document.getElementById('prev').value=ps.value; redraw(); } };
   document.getElementById('prev').oninput = ()=>{ ps.value='custom'; redraw(); };
-  ['outcome','sort'].forEach(id=>document.getElementById(id).onchange=fillPicker);
+  document.getElementById('sort').onchange=fillPicker;
+  document.getElementById('idfilter').oninput=fillPicker;
+  document.querySelectorAll('#pills .pill').forEach(b=>b.onclick=()=>{
+    document.querySelectorAll('#pills .pill').forEach(x=>x.classList.remove('on'));
+    b.classList.add('on'); FILTER=b.dataset.f; fillPicker();
+  });
   fillPicker();
   await load(currentList()[0].id);
 }
 
+let FILTER='all';
+/* pH bands rather than one acidaemic/normal split: 7.05 is the severe cut-off
+   clinicians act on, 7.20 the one this model is trained against, and the two
+   groups are very different sizes. `y` is the model's own label, so a record
+   with no pH in its header still filters correctly on the 7.20 band. */
+function passes(r){
+  if(FILTER==='all') return true;
+  if(FILTER==='705') return r.ph!=null && r.ph < 7.05;
+  if(FILTER==='720') return r.ph!=null ? r.ph < 7.20 : r.y===1;
+  return r.ph!=null ? r.ph >= 7.20 : r.y===0;
+}
 function currentList(){
-  const oc=document.getElementById('outcome').value, so=document.getElementById('sort').value;
-  let L = META.records.filter(r=> oc==='all' || String(r.y)===oc);
+  const so=document.getElementById('sort').value;
+  const q=(document.getElementById('idfilter').value||'').trim();
+  let L = META.records.filter(r=> passes(r) && (!q || String(r.id).includes(q)));
   if(so==='id') L.sort((a,b)=>a.id-b.id);
   else L.sort((a,b)=> so==='hi' ? b.last-a.last : a.last-b.last);
   return L;
@@ -184,18 +220,28 @@ function currentList(){
 function fillPicker(){
   const L=currentList(), box=document.getElementById('picker');
   document.getElementById('pickcap').textContent =
-    `Record (${L.length} available) — click a line`;
+    `${L.length} record${L.length===1?'':'s'} — click a line`;
   box.innerHTML='';
   L.forEach(r=>{
     const d=document.createElement('div');
-    d.textContent = `${r.y? '⚠︎':'✓'} ${String(r.id).padEnd(6)}${r.last.toFixed(2).padStart(6)}×`;
-    d.dataset.id=r.id; d.onclick=()=>load(r.id); box.appendChild(d);
+    d.className='row'; d.dataset.id=r.id;
+    const col = r.y ? UP : DOWN;
+    const bits = [];
+    if(r.ph!=null) bits.push(`pH ${r.ph.toFixed(2)}`);
+    if(r.dur!=null) bits.push(`${r.dur}m`);
+    d.innerHTML = `<span class="dot" style="background:${col}"></span>`
+                + `<span class="rid">${r.id}</span>`
+                + `<span class="meta">${bits.join(' · ')}</span>`;
+    d.onclick=()=>load(r.id); box.appendChild(d);
   });
   if(REC) mark(REC.record_id);
 }
 function mark(id){
-  document.querySelectorAll('#picker div').forEach(d=>
-    d.classList.toggle('sel', +d.dataset.id===id));
+  document.querySelectorAll('#picker .row').forEach(d=>{
+    const on = +d.dataset.id===id;
+    d.classList.toggle('sel', on);
+    if(on) d.scrollIntoView({block:'nearest'});
+  });
 }
 
 async function load(id){
@@ -343,50 +389,92 @@ function drawFig(s){
   const anchorBase = s[0]-REC.log_or[0];
   const st = bandStack(P, anchorBase);
   const traces=[];
-  const n = NOW+1;
+  /* The WHOLE curve is drawn, always. Truncating it at the cursor made every
+     click look like the chart was collapsing; the cursor marks a moment, it
+     does not decide how much of the recording exists. */
   G.forEach((g,j)=>{
-    traces.push({x:x.slice(0,n).concat(x.slice(0,n).slice().reverse()),
-      y:st.lo.slice(0,n).map(r=>r[j]).concat(st.hi.slice(0,n).map(r=>r[j]).reverse()),
+    traces.push({x:x.concat(x.slice().reverse()),
+      y:st.lo.map(r=>r[j]).concat(st.hi.map(r=>r[j]).reverse()),
       fill:'toself',fillcolor:FAM[g]||FAM.Other,line:{width:0},opacity:.85,
       name:g,hoverinfo:'skip',type:'scatter',mode:'lines',xaxis:'x',yaxis:'y'});
   });
-  traces.push({x:x.slice(0,n),y:s.slice(0,n),mode:'lines',line:{color:'#fff',width:6.5},
+  traces.push({x:x,y:st.s,mode:'lines',line:{color:'#fff',width:6.5},
                showlegend:false,hoverinfo:'skip',xaxis:'x',yaxis:'y',type:'scatter'});
-  traces.push({x:x.slice(0,n),y:s.slice(0,n),mode:'lines',name:'Odds ratio',
+  traces.push({x:x,y:st.s,mode:'lines',name:'Odds ratio',
     line:{color:'#111',width:3.2},type:'scatter',xaxis:'x',yaxis:'y',
-    customdata:s.slice(0,n).map(v=>Math.exp(v)),
-    hovertemplate:'%{x:.0f} min before delivery<br><b>%{customdata:.2f}×</b><extra></extra>'});
-  traces.push({x:[x[NOW]],y:[s[NOW]],mode:'markers',showlegend:false,type:'scatter',
-    xaxis:'x',yaxis:'y',marker:{size:15,color:Math.exp(s[NOW])>1?UP:DOWN,
+    customdata:st.s.map(v=>Math.exp(v)),
+    hovertemplate:'%{x:.0f} min before delivery<br><b>%{customdata:.2f}×</b>'+
+                  '<br><i>click to read this minute</i><extra></extra>'});
+  traces.push({x:[x[NOW]],y:[st.s[NOW]],mode:'markers',showlegend:false,type:'scatter',
+    xaxis:'x',yaxis:'y',marker:{size:15,color:Math.exp(st.s[NOW])>1?UP:DOWN,
     line:{color:'#fff',width:2.5}},hoverinfo:'skip'});
 
   const rows = REC.strip ? 3 : 1;
+  const shapes=[];
   if(REC.strip){
-    traces.push({x:REC.strip.x,y:REC.strip.fhr,mode:'lines',line:{color:FHRC,width:1},
+    traces.push({x:REC.strip.x,y:REC.strip.fhr,mode:'lines',line:{color:'#ff2d6f',width:1},
                  name:'FHR',type:'scatter',xaxis:'x2',yaxis:'y2',showlegend:false,
                  hovertemplate:'%{y:.0f} bpm<extra></extra>'});
-    traces.push({x:REC.strip.x,y:REC.strip.uc,mode:'lines',line:{color:FAM['Uterine activity'],width:1},
+    if(REC.strip.base)
+      traces.push({x:REC.strip.x,y:REC.strip.base,mode:'lines',
+        line:{color:'#111',width:1.4,dash:'dash'},name:'baseline (causal)',
+        type:'scatter',xaxis:'x2',yaxis:'y2',showlegend:true,hoverinfo:'skip'});
+    traces.push({x:REC.strip.x,y:REC.strip.uc,mode:'lines',line:{color:'#2f7fd0',width:1},
                  name:'UC',type:'scatter',xaxis:'x3',yaxis:'y3',showlegend:false,
                  hovertemplate:'%{y:.0f}<extra></extra>'});
+
+    /* Events, shaded where they happened and coloured by TYPE. Contractions
+       are drawn on the UC panel where they were measured and faintly on the
+       FHR panel so a deceleration can be read against the contraction that
+       may have caused it. */
+    (REC.events||[]).forEach(e=>{
+      const col = EVC[e.d] || '#bbb';
+      if(e.k==='contraction'){
+        shapes.push({type:'rect',xref:'x3',yref:'y3 domain',x0:e.a,x1:e.b,y0:0,y1:1,
+                     fillcolor:col,opacity:.22,line:{width:0},layer:'below'});
+        shapes.push({type:'rect',xref:'x2',yref:'y2 domain',x0:e.a,x1:e.b,y0:0,y1:1,
+                     fillcolor:col,opacity:.08,line:{width:0},layer:'below'});
+      } else {
+        shapes.push({type:'rect',xref:'x2',yref:'y2 domain',x0:e.a,x1:e.b,y0:0,y1:1,
+                     fillcolor:col,opacity:.26,line:{width:0},layer:'below'});
+      }
+    });
+
+    /* Shapes cannot carry hover, so each event also gets a marker that can.
+       Grouped by type so the legend doubles as the key. */
+    const byType = {};
+    (REC.events||[]).forEach(e=>{ (byType[e.d] = byType[e.d] || []).push(e); });
+    Object.entries(byType).forEach(([t,evs])=>{
+      const uc = t==='contraction';
+      traces.push({
+        x:evs.map(e=>(e.a+e.b)/2),
+        y:evs.map(()=> uc ? 0 : 200),
+        mode:'markers', type:'scatter', name:t,
+        xaxis: uc?'x3':'x2', yaxis: uc?'y3':'y2',
+        marker:{size:9,symbol:uc?'triangle-up':'triangle-down',
+                color:EVC[t]||'#bbb',line:{color:'#fff',width:1}},
+        customdata:evs.map(e=>[t,(e.b-e.a)*60,-e.b,-e.a,ETIO[t]||'']),
+        hovertemplate:'<b>%{customdata[0]}</b><br>'+
+          '%{customdata[2]:.1f} → %{customdata[3]:.1f} min before delivery<br>'+
+          '%{customdata[1]:.0f} s<br><i>%{customdata[4]}</i><extra></extra>'});
+    });
   }
-  const shapes=[];
+
   [[30,'dash'],[60,'dot']].forEach(([d,dash])=>{
     for(let r=1;r<=rows;r++) shapes.push({type:'line',x0:x[NOW]-d,x1:x[NOW]-d,
       yref:r===1?'y domain':(r===2?'y2 domain':'y3 domain'),y0:0,y1:1,
       xref:r===1?'x':(r===2?'x2':'x3'),line:{color:'#151515',width:1.2,dash:dash}});
   });
-  if(REC.events) REC.events.forEach(e=>{
-    const col = EVC[e.k] || '#bbb';
-    shapes.push({type:'rect',xref:'x2',yref:'y2 domain',x0:e.a,x1:e.b,y0:0,y1:1,
-                 fillcolor:col,opacity:.16,line:{width:0},layer:'below'});
-  });
+  for(let r=1;r<=rows;r++) shapes.push({type:'line',x0:x[NOW],x1:x[NOW],
+    yref:r===1?'y domain':(r===2?'y2 domain':'y3 domain'),y0:0,y1:1,
+    xref:r===1?'x':(r===2?'x2':'x3'),line:{color:'#111',width:1.6}});
 
   const lay = {
-    height: rows===3?640:380, margin:{l:52,r:14,t:44,b:40},
-    font:{size:14,family:PLOT_FONT}, hovermode:'x unified', shapes:shapes,
+    height: rows===3?680:380, margin:{l:56,r:14,t:44,b:40},
+    font:{size:14,family:PLOT_FONT}, hovermode:'closest', shapes:shapes,
     legend:{orientation:'h',y:1.02,yanchor:'bottom',x:0,font:{size:12}},
     plot_bgcolor:'#fff', paper_bgcolor:'#fff',
-    xaxis :{domain:[0,1], anchor:'y',  showgrid:true, gridcolor:'#eee',
+    xaxis :{domain:[0,1], anchor:'y', showgrid:true, gridcolor:'#eee',
             title:{text: rows===3?'':'minutes before delivery'}},
     yaxis :{domain: rows===3?[0.52,1]:[0,1], anchor:'x', title:{text:'odds / typical'},
             showgrid:true, gridcolor:'#eee',
@@ -410,44 +498,6 @@ function drawFig(s){
     x.forEach((v,i)=>{ const d=Math.abs(v-px); if(d<bd){bd=d;best=i;} });
     NOW=best; redraw();
   });
-}
-
-/* Percentile as a number over a filled bar, so a column of them can be scanned
-   without reading every figure. */
-function pctCell(p){
-  if(p==null) return '';
-  const n=Math.round(p);
-  return `<div style="position:relative;min-width:64px">`
-       + `<div style="position:absolute;inset:0;background:var(--warm);border-radius:4px"></div>`
-       + `<div style="position:absolute;left:0;top:0;bottom:0;width:${n}%;`
-       + `background:var(--ink3);opacity:.35;border-radius:4px"></div>`
-       + `<span style="position:relative">${n}</span></div>`;
-}
-function fmtNum(v){
-  if(v==null || !isFinite(v)) return '';
-  return Math.abs(v)>=100 ? v.toFixed(0) : (Math.abs(v)>=1 ? v.toFixed(2) : v.toFixed(3));
-}
-
-/* The app's coloured metadata cards. Label and value sit in a two-column
-   max-content grid so the pair stays together instead of being thrown to
-   opposite edges of a stretched card. */
-function drawMeta(){
-  const box = document.getElementById('meta');
-  if(!REC.meta){ box.innerHTML=''; return; }
-  const cards = Object.entries(REC.meta).map(([g, items])=>{
-    const col = (META.meta_colors||{})[g] || '#8b8b8b';
-    const rows = items.map(([lab, val, note])=>{
-      const t = note ? ` title="${String(note).replace(/"/g,'&quot;')}"` : '';
-      return `<span style="opacity:.9"${t}>${lab}</span>`
-           + `<span style="font-weight:700;white-space:nowrap"${t}>${val}</span>`;
-    }).join('');
-    return `<div style="flex:0 1 auto;background:${col};color:#fff;`
-         + `border-radius:12px;padding:12px 14px">`
-         + `<div style="font-weight:800;font-size:17px;margin-bottom:8px">${g}</div>`
-         + `<div style="display:grid;grid-template-columns:max-content max-content;`
-         + `column-gap:18px;row-gap:2px;font-size:14px;line-height:1.7">${rows}</div></div>`;
-  }).join('');
-  box.innerHTML = `<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:stretch">${cards}</div>`;
 }
 
 function drawTable(){

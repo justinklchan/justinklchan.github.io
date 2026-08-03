@@ -68,6 +68,9 @@
   th,td{text-align:left;padding:6px 10px;border-bottom:1px solid var(--line);
         vertical-align:top;white-space:nowrap;width:1%}
   th{font-size:13px;color:var(--mut);font-weight:600}
+  th.sortable{cursor:pointer;user-select:none;white-space:nowrap}
+  th.sortable:hover{color:var(--ink)}
+  th.sortable.on{color:var(--sel)}
   td.wrap,th.wrap{white-space:normal;width:auto;min-width:22ch}
   td.num{text-align:right;font-variant-numeric:tabular-nums}
   .chip{display:inline-block;border:2.5px solid var(--up);border-radius:12px;padding:5px 11px;
@@ -98,9 +101,11 @@
     </div>
     <input type="search" id="idfilter" placeholder="Filter by record id…">
     <select id="sort">
-      <option value="id">Record id</option>
-      <option value="hi">Odds ratio: high → low</option>
+      <option value="hi" selected>Odds ratio: high → low</option>
       <option value="lo">Odds ratio: low → high</option>
+      <option value="phlo">Cord pH: low → high</option>
+      <option value="phhi">Cord pH: high → low</option>
+      <option value="id">Record id</option>
     </select>
     <div id="picker"></div>
     <p class="cap" id="pickcap"></p>
@@ -137,8 +142,30 @@ const FAM = {
   'Decelerations':'#eb6834','Accelerations':'#1baf7a','Uterine activity':'#eda100',
   'Signal quality':'#4a3aa7','Elapsed time':'#8a8880','Maternal history':'#0e7c7b',
   'Decel-UC coupling':'#c2185b','Other':'#b3b1a8'};
-const EVC = {'contraction':FAM['Uterine activity'],'acceleration':FAM['Accelerations'],
-             'deceleration':FAM['Decelerations']};
+/* A CONCERN RAMP, not a categorical scale: green reassuring, amber benign,
+   orange context-dependent, red concerning, dark red urgent. The four
+   deceleration subtypes are four different physiological stories, so three
+   shades of one red would hide the distinction that carries the meaning.
+   The family anchors still hold where an event maps onto a feature family. */
+const EVC = {
+  contraction:  FAM['Uterine activity'],
+  acceleration: FAM['Accelerations'],
+  deceleration: FAM['Decelerations'],
+  early:'#ffd166', variable:'#f4832f', late:FAM['Decelerations'],
+  prolonged:'#76161f', uncertain:'#c4c4c4', suspected_loss:'#9e9e9e',
+  tachycardia:'#30566e', bradycardia:'#7da3ba'};
+/* The mechanism each pattern is thought to reflect -- the reason the typing
+   matters at all, and what the hover label says. */
+const ETIO = {
+  acceleration:'Intact autonomic response — reassuring',
+  early:'Head compression → vagal reflex. Benign; mirrors the contraction',
+  variable:'Cord compression. Context-dependent',
+  late:'Uteroplacental insufficiency — concerning',
+  prolonged:'Sustained interruption of supply — urgent',
+  uncertain:'Deceleration the annotator did not type',
+  deceleration:'Deceleration', contraction:'Uterine contraction',
+  suspected_loss:'Recovered from signal loss — nadir estimated, not observed',
+  tachycardia:'Baseline above 160 bpm', bradycardia:'Baseline below 110 bpm'};
 const UP='#e34948', DOWN='#008300', FHRC='#c2185b';
 /* Plotly does not inherit the page font, so the charts have to be told. */
 const PLOT_FONT='Roboto, -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif';
@@ -175,6 +202,29 @@ function pctLabel(p){
   const n=Math.round(p);
   const suf = (n%100>=10 && n%100<=20) ? 'th' : ({1:'st',2:'nd',3:'rd'}[n%10] || 'th');
   return `${n}${suf} pct`;
+}
+/* The percentile as a table cell: the number, plus a bar so a column of them
+   can be scanned without reading. Coloured by DISTANCE from the middle, not by
+   direction -- an extreme value is notable either way, and which way is
+   concerning depends on the feature. */
+/* Compact number formatting for the table: keep three significant figures
+   without printing 0.0000000001 or 123456.789. */
+function fmtNum(v){
+  if(v==null || !isFinite(v)) return '';
+  const a = Math.abs(v);
+  if(a===0) return '0';
+  if(a>=1000 || a<0.01) return v.toPrecision(3);
+  return String(+v.toPrecision(3));
+}
+function pctCell(p){
+  if(p==null || !isFinite(p)) return '<span style="color:var(--mut)">—</span>';
+  const n = Math.round(p);
+  const extreme = Math.abs(n-50)/50;                 /* 0 middling .. 1 extreme */
+  const col = extreme>0.8 ? UP : (extreme>0.5 ? '#f4832f' : 'var(--mut)');
+  return `<span style="display:inline-flex;align-items:center;gap:6px;justify-content:flex-end">`
+       + `<span style="color:${col};font-weight:${extreme>0.5?700:400}">${pctLabel(p)}</span>`
+       + `<span style="display:inline-block;width:34px;height:6px;border-radius:3px;`
+       + `background:linear-gradient(to right, ${col} ${n}%, var(--line) ${n}%)"></span></span>`;
 }
 function label(f){ const d=META.doc[f]; return d? d[0] : f.replace(/_/g,' '); }
 function unit(f){ const d=META.doc[f]; return d? d[1] : ''; }
@@ -214,6 +264,16 @@ function currentList(){
   const q=(document.getElementById('idfilter').value||'').trim();
   let L = META.records.filter(r=> passes(r) && (!q || String(r.id).includes(q)));
   if(so==='id') L.sort((a,b)=>a.id-b.id);
+  else if(so==='phlo' || so==='phhi'){
+    /* Records with no pH in the header sort to the bottom either way, rather
+       than clustering at one end as if they were the most or least acidaemic. */
+    const d = so==='phlo' ? 1 : -1;
+    L.sort((a,b)=>{
+      if(a.ph==null) return 1;
+      if(b.ph==null) return -1;
+      return d*(a.ph-b.ph) || a.id-b.id;
+    });
+  }
   else L.sort((a,b)=> so==='hi' ? b.last-a.last : a.last-b.last);
   return L;
 }
@@ -283,6 +343,33 @@ function redraw(){
   drawBar(anchor, orNow, atNow);
   drawFig(s);
   drawTable();
+}
+
+/* The function redraw() has been calling all along. Its absence threw on every
+   render, which is why nothing drew at all -- one missing definition takes the
+   whole page down, not just the panel it belongs to. */
+function drawMeta(){
+  const box = document.getElementById('meta');
+  if(!box) return;
+  const M = REC.meta;
+  if(!M){ box.innerHTML=''; return; }
+  const C = (META && META.meta_colors) || {};
+  let h = '<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:stretch">';
+  Object.entries(M).forEach(([group, items])=>{
+    const col = C[group] || '#8b8b8b';
+    h += `<div style="flex:0 1 auto;background:${col};color:#fff;border-radius:12px;`
+       + `padding:12px 16px 16px">`
+       + `<div style="font-weight:800;font-size:17px;margin-bottom:8px">${group}</div>`
+       + `<div style="display:grid;grid-template-columns:max-content max-content;`
+       + `column-gap:18px;row-gap:2px;font-size:14px;line-height:1.7">`;
+    items.forEach(([label, value, note])=>{
+      const t = note ? ` title="${String(note).replace(/"/g,'&quot;')}"` : '';
+      h += `<span style="opacity:.9"${t}>${label}</span>`
+         + `<span style="font-weight:700;white-space:nowrap"${t}>${value}</span>`;
+    });
+    h += '</div></div>';
+  });
+  box.innerHTML = h + '</div>';
 }
 
 function segments(topk){
@@ -500,25 +587,74 @@ function drawFig(s){
   });
 }
 
-function drawTable(){
+/* Click a header to re-sort. Rank ('#') is assigned by |phi| BEFORE any
+   re-sort and travels with its row, so sorting by Category does not renumber
+   the ranks into something meaningless. */
+let TSORT = {key:'phi', dir:-1};
+const TCOLS = [
+  {key:'rank',  head:'#',              num:true},
+  {key:'cat',   head:'Category',       num:false},
+  {key:'feat',  head:'Feature',        num:false},
+  {key:'mean',  head:'What it measures', num:false, wrap:true},
+  {key:'val',   head:'Value',          num:true},
+  {key:'pct',   head:'Cohort %ile',    num:true},
+  {key:'med',   head:'Cohort median',  num:true},
+  {key:'mult',  head:'Multiplier',     num:true},
+  {key:'phi',   head:'log-odds φ',     num:true},
+];
+
+function tableRows(){
   const phi=REC.phi[NOW], F=META.feat_cols, X=REC.X[NOW];
-  const idx=phi.map((v,i)=>i).sort((a,b)=>Math.abs(phi[b])-Math.abs(phi[a]));
-  let h='<table><tr><th>#</th><th>Category</th><th>Feature</th>'
-      + '<th class="wrap">What it measures</th>'
-      + '<th class="num">Value</th><th class="num">Cohort %ile</th>'
-      + '<th class="num">Cohort median</th>'
-      + '<th class="num">Multiplier</th><th class="num">log-odds φ</th></tr>';
-  idx.forEach((i,k)=>{
-    const g=META.groups[i], c=FAM[g]||FAM.Other;
-    h+=`<tr><td class="num">${k+1}</td>`
-     + `<td><span style="background:${c}22;color:${c};border-radius:6px;padding:2px 7px;font-weight:600">${g}</span></td>`
-     + `<td><b>${label(F[i])}</b>${unit(F[i])?` <span style="color:#9aa">(${unit(F[i])})</span>`:''}</td>`
-     + `<td class="wrap" style="color:#555">${meaning(F[i])}</td>`
-     + `<td class="num">${X[i]==null?'':X[i]}</td>`
-     + `<td class="num">${pctCell(cohortPct(X[i], META.pctgrid[F[i]]))}</td>`
-     + `<td class="num">${META.pctgrid[F[i]] ? fmtNum(META.pctgrid[F[i]][50]) : ''}</td>`
-     + `<td class="num" style="color:${phi[i]>0?UP:DOWN}">${Math.exp(phi[i]).toFixed(3)}×</td>`
-     + `<td class="num">${phi[i]>0?'+':''}${phi[i].toFixed(4)}</td></tr>`;
+  const rows = phi.map((v,i)=>({
+    i, cat: META.groups[i], feat: label(F[i]), unit: unit(F[i]),
+    mean: meaning(F[i]), val: X[i],
+    pct: cohortPct(X[i], META.pctgrid[F[i]]),
+    med: META.pctgrid[F[i]] ? META.pctgrid[F[i]][50] : null,
+    mult: Math.exp(v), phi: v,
+  }));
+  rows.sort((a,b)=>Math.abs(b.phi)-Math.abs(a.phi));
+  rows.forEach((r,k)=>r.rank=k+1);
+  const col = TCOLS.find(c=>c.key===TSORT.key) || TCOLS[8];
+  const dir = TSORT.dir;
+  rows.sort((a,b)=>{
+    let x=a[col.key], y=b[col.key];
+    if(col.key==='phi'){ x=Math.abs(x); y=Math.abs(y); }   /* size, not sign */
+    if(x==null) return 1;
+    if(y==null) return -1;
+    return col.num ? dir*(x-y) : dir*String(x).localeCompare(String(y));
+  });
+  return rows;
+}
+
+function sortTable(key){
+  /* First click on a new column sorts descending for numbers (biggest first is
+     what a reader wants) and ascending for text. */
+  const col = TCOLS.find(c=>c.key===key);
+  TSORT = (TSORT.key===key) ? {key, dir:-TSORT.dir}
+                            : {key, dir: col.num ? -1 : 1};
+  drawTable();
+}
+
+function drawTable(){
+  const rows = tableRows();
+  const head = TCOLS.map(c=>{
+    const on = TSORT.key===c.key;
+    const arrow = on ? (TSORT.dir>0 ? ' ▲' : ' ▼') : '';
+    return `<th class="${c.num?'num':''}${c.wrap?' wrap':''} sortable`
+         + `${on?' on':''}" onclick="sortTable('${c.key}')">${c.head}${arrow}</th>`;
+  }).join('');
+  let h = `<table><tr>${head}</tr>`;
+  rows.forEach(r=>{
+    const c = FAM[r.cat]||FAM.Other;
+    h+=`<tr><td class="num">${r.rank}</td>`
+     + `<td><span style="background:${c}22;color:${c};border-radius:6px;padding:2px 7px;font-weight:600">${r.cat}</span></td>`
+     + `<td><b>${r.feat}</b>${r.unit?` <span style="color:var(--ink3)">(${r.unit})</span>`:''}</td>`
+     + `<td class="wrap" style="color:var(--mut)">${r.mean}</td>`
+     + `<td class="num">${r.val==null?'':r.val}</td>`
+     + `<td class="num">${pctCell(r.pct)}</td>`
+     + `<td class="num">${fmtNum(r.med)}</td>`
+     + `<td class="num" style="color:${r.phi>0?UP:DOWN}">${r.mult.toFixed(3)}×</td>`
+     + `<td class="num">${r.phi>0?'+':''}${r.phi.toFixed(4)}</td></tr>`;
   });
   document.getElementById('tbl').innerHTML = h+'</table>';
 }

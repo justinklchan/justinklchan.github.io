@@ -124,7 +124,7 @@ function anchorOffset(lastLogOr, targetPct){
   const p = Math.min(Math.max(targetPct/100, 1e-6), 1-1e-6);
   const mean = c => lastLogOr.reduce((s,v)=>s+1/(1+Math.exp(-(v+c))),0)/lastLogOr.length;
   let lo=-25, hi=25;
-  for(let i=0;i<200;i++){ const m=(lo+hi)/2; (mean(m)<p ? lo : hi) = m; }
+  for(let i=0;i<200;i++){ const m=(lo+hi)/2; if(mean(m)<p) lo=m; else hi=m; }
   return (lo+hi)/2;
 }
 function qualitative(v, q){

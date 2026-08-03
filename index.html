@@ -37,10 +37,17 @@
   #picker div:hover{background:rgba(128,128,128,.14)}
   #picker div.sel{background:rgba(255,0,81,.14);font-weight:700}
   .cap{font-size:13.5px;color:var(--mut);margin:6px 0 0}
-  table{border-collapse:collapse;width:100%;font-size:14px;margin-top:8px}
-  th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+  /* Columns size to their contents. Every cell is nowrap so a column is exactly
+     as wide as its widest value, except the description, which wraps and takes
+     whatever slack is left -- otherwise the long prose column stretched every
+     other column with it and left the numbers floating a long way from their
+     labels. */
+  table{border-collapse:collapse;width:100%;table-layout:auto;font-size:14px;margin-top:8px}
+  th,td{text-align:left;padding:6px 10px;border-bottom:1px solid var(--line);
+        vertical-align:top;white-space:nowrap;width:1%}
   th{font-size:13px;color:var(--mut);font-weight:600}
-  td.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+  td.wrap,th.wrap{white-space:normal;width:auto;min-width:22ch}
+  td.num{text-align:right;font-variant-numeric:tabular-nums}
   .chip{display:inline-block;border:2.5px solid var(--up);border-radius:12px;padding:5px 11px;
         font-weight:800;font-size:20px;color:var(--up);margin:0 3px}
   .chip.dn{border-color:var(--down);color:var(--down)}
@@ -107,7 +114,8 @@
 const FAM = {
   'FHR distribution':'#6c757d','Baseline':'#457b9d','Variability':'#9d4edd',
   'Decelerations':'#d62839','Accelerations':'#2a9d8f','Uterine activity':'#5f4b8b',
-  'Signal quality':'#adb5bd','Elapsed time':'#8d99ae','Other':'#9e9e9e'};
+  'Signal quality':'#adb5bd','Elapsed time':'#8d99ae','Maternal history':'#e07a5f',
+  'Other':'#9e9e9e'};
 const EVC = {'contraction':'#5f4b8b','acceleration':'#2a9d8f','deceleration':'#d62839'};
 const UP='#ff0051', DOWN='#008bfb';
 /* Plotly does not inherit the page font, so the charts have to be told. */
@@ -392,7 +400,8 @@ function drawFig(s){
 function drawTable(){
   const phi=REC.phi[NOW], F=META.feat_cols, X=REC.X[NOW];
   const idx=phi.map((v,i)=>i).sort((a,b)=>Math.abs(phi[b])-Math.abs(phi[a]));
-  let h='<table><tr><th>#</th><th>Category</th><th>Feature</th><th>What it measures</th>'
+  let h='<table><tr><th>#</th><th>Category</th><th>Feature</th>'
+      + '<th class="wrap">What it measures</th>'
       + '<th class="num">Value</th><th class="num">vs cohort</th>'
       + '<th class="num">Multiplier</th><th class="num">log-odds φ</th></tr>';
   idx.forEach((i,k)=>{
@@ -400,7 +409,7 @@ function drawTable(){
     h+=`<tr><td class="num">${k+1}</td>`
      + `<td><span style="background:${c}22;color:${c};border-radius:6px;padding:2px 7px;font-weight:600">${g}</span></td>`
      + `<td><b>${label(F[i])}</b>${unit(F[i])?` <span style="color:#9aa">(${unit(F[i])})</span>`:''}</td>`
-     + `<td style="color:#555">${meaning(F[i])}</td>`
+     + `<td class="wrap" style="color:#555">${meaning(F[i])}</td>`
      + `<td class="num">${X[i]==null?'':X[i]}</td>`
      + `<td class="num">${qualitative(X[i],META.pct[F[i]])}</td>`
      + `<td class="num" style="color:${phi[i]>0?UP:DOWN}">${Math.exp(phi[i]).toFixed(3)}×</td>`

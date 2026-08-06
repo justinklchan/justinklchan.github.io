@@ -52,10 +52,28 @@
   .badge{font-size:14px;font-weight:700;border-radius:999px;padding:4px 13px}
   .bad{color:#c62828;background:#fdecea}
   .ok{color:#2e7d32;background:#e8f5e9}
+  /* "not measured" has to look unlike every number in the column, or it reads
+     as one. Italic, muted, and dashed-underlined so it invites the tooltip. */
+  .miss{color:var(--ink3);font-style:italic;
+    border-bottom:1px dashed var(--ink3);cursor:help}
   label{display:block;font-size:14px;color:var(--mut);margin:12px 0 4px}
   select,input[type=number]{width:100%;padding:7px 9px;font-size:15px;border:1px solid var(--line);
     border-radius:8px;background:#fff;color:var(--ink)}
   input[type=range]{width:100%}
+  label.check{display:flex;align-items:center;gap:8px;margin:0;padding:4px 2px;
+    cursor:pointer;color:var(--ink);font-size:14px;line-height:1.3;border-radius:7px}
+  label.check:hover{background:rgba(0,0,0,.04)}
+  label.check input{margin:0;flex:none;accent-color:var(--sel);cursor:pointer}
+  /* The swatch is the band colour from the chart, so the list reads as a key
+     to the stack as well as a set of switches. */
+  label.check .sw{width:10px;height:10px;border-radius:3px;flex:none}
+  /* An unticked family is dimmed rather than hidden: the point is to see what
+     you have taken out, not to lose track of it. */
+  label.check.off{color:var(--ink3)}
+  label.check.off .sw{opacity:.3}
+  label.check .amt{margin-left:auto;font-size:12.5px;color:var(--mut);
+    font-variant-numeric:tabular-nums;white-space:nowrap}
+  label.check.off .amt{opacity:.45}
   #pills{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 10px}
   .pill{border:1px solid var(--line);background:var(--panel);color:var(--ink2);
     border-radius:999px;padding:6px 13px;font-size:13.5px;font-weight:600;cursor:pointer}
@@ -69,7 +87,10 @@
      that decide whether it is worth opening -- cord pH and how long the trace
      runs. The odds ratio is what the list is sorted by, so it has to be on the
      line; a sort you cannot see the key for reads as an arbitrary order. */
-  #picker .row{display:flex;align-items:center;gap:10px;padding:9px 12px;
+  /* Four things on one line in a 290px rail, so the gap comes down from 10 to
+     7: id, ratio, predicted risk, then the facts that decide whether the record
+     is worth opening. */
+  #picker .row{display:flex;align-items:center;gap:7px;padding:9px 10px;
     cursor:pointer;border-bottom:1px solid var(--line);font-size:15px}
   #picker .row:last-child{border-bottom:0}
   #picker .row:hover{background:var(--warm)}
@@ -77,7 +98,16 @@
   #picker .rid{font-weight:700;font-variant-numeric:tabular-nums}
   #picker .or{font-weight:700;font-size:13.5px;font-variant-numeric:tabular-nums;
     white-space:nowrap;padding:1px 7px;border-radius:999px;line-height:1.5}
-  #picker .meta{margin-left:auto;color:var(--mut);font-size:13.5px;
+  /* The model's yes/no call, beside the ratio it is derived from. YES is filled
+     and no is outlined rather than both being coloured chips: a list is scanned
+     for the alarms, and an outlined 'no' recedes instead of competing. */
+  #picker .call{font-weight:800;font-size:11.5px;letter-spacing:.4px;
+    padding:2px 7px;border-radius:6px;white-space:nowrap;cursor:help}
+  #picker .call.y{background:var(--up);color:#fff}
+  #picker .call.n{background:transparent;color:var(--ink3);
+    border:1px solid var(--line)}
+  #picker .row.sel .call.n{color:#eaf2ff;border-color:rgba(255,255,255,.45)}
+  #picker .meta{margin-left:auto;color:var(--mut);font-size:13px;
     font-variant-numeric:tabular-nums;white-space:nowrap}
   #picker .row.sel{background:var(--sel);color:#fff}
   #picker .row.sel .meta{color:#eaf2ff}
@@ -147,7 +177,9 @@
      while the button is still down. */
   #fig .nsewdrag,#fig .drag{cursor:grab}
   body.panning,body.panning #fig .nsewdrag,body.panning #fig .drag{cursor:grabbing}
-  body.panning{user-select:none}
+  body.ondot,body.ondot #fig .nsewdrag,body.ondot #fig .drag{cursor:grab}
+  body.scrubbing,body.scrubbing #fig .nsewdrag,body.scrubbing #fig .drag{cursor:grabbing}
+  body.panning,body.scrubbing{user-select:none}
   #winpills{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0 2px}
   #winpills .pill{font-size:13px;padding:5px 12px}
   #winpills .pill .n{opacity:.6;font-weight:400;margin-left:5px}
@@ -203,7 +235,6 @@
      inside its own panel rather than pushing the page wider than everything
      else -- an overflowing table was the loudest of the mismatched widths. */
   .tablewrap{overflow-x:auto}
-  .foot{margin:18px 2px 0}
 </style>
 </head>
 <body>
@@ -216,7 +247,16 @@
     <select id="preset"></select>
     <label for="prev">Prevalence (%)</label>
     <input type="number" id="prev" min="0.01" max="90" step="0.1" value="18.1">
-    <p class="cap" id="basecap"></p>
+
+    <h3>What the score uses</h3>
+    <!-- One row per feature family, built from the data so it cannot drift
+         from the bands on the chart. -->
+    <div id="famlist"></div>
+    <p class="cap">
+      Unticking subtracts that family's contribution from the curve. It is not
+      a model retrained without it: the signal is removed, not redistributed
+      onto what is left. <a href="#" id="famall">Turn all on</a>
+    </p>
 
     <h3>Recording</h3>
     <div id="pills">
@@ -287,16 +327,6 @@
       <div class="tablewrap"><div id="tbl"></div></div>
     </section>
 
-    <p class="cap foot">
-      Out-of-fold predictions under record-grouped cross-validation: no record was
-      ever scored by a model that saw it. The only label is cord pH at birth, so a
-      value here is “given what is known at this minute, this baby ends acidaemic
-      with probability p”. Discrimination falls from about 0.68 at delivery to near
-      chance an hour out — read early positions as explanation, not as warning.
-      Odds ratios are measured against a typical birth in the reference population
-      you select; the absolute probability rests on that assumption, the ratio does
-      not. Cohort: CTU-CHB, 512 records with clinician annotations, 32% acidaemic.
-    </p>
    </div>
   </div>
 </div>
@@ -306,11 +336,15 @@ const FAM = {
   'FHR distribution':'#e87ba4','Baseline':'#2a78d6','Variability':'#008300',
   'Decelerations':'#eb6834','Accelerations':'#1baf7a','Uterine activity':'#eda100',
   'Signal quality':'#4a3aa7','Elapsed time':'#8a8880','Maternal history':'#0e7c7b',
+  /* Distinct from Elapsed time on purpose: one is a clock in the labour, the
+     other only says how much trace the database kept. */
+  'Labour stage':'#b5651d',
   'Decel-UC coupling':'#c2185b','Other':'#b3b1a8'};
 /* The strip shows the three things a tracing is actually read by: the
-   baseline, the accelerations, and the decelerations typed against the
-   contraction that may have caused them. Contractions have their own panel and
-   do not need to be painted over the FHR as well.
+   baseline, the accelerations, and the decelerations -- typed against the
+   contraction that may have caused them where the linker could manage it, and
+   marked grey and open where it could not. Contractions have their own panel
+   and do not need to be painted over the FHR as well.
 
    A CONCERN RAMP, not a categorical scale: green reassuring, amber benign,
    orange context-dependent, red concerning. The deceleration subtypes are
@@ -319,25 +353,33 @@ const FAM = {
 const EVC = {
   acceleration: FAM['Accelerations'],
   early:'#ffd166', variable:'#f4832f', late:FAM['Decelerations'],
-  prolonged:'#76161f', contraction: FAM['Uterine activity'],
+  prolonged:'#76161f', untyped:'#9a9790', contraction: FAM['Uterine activity'],
   tachycardia:'#30566e', bradycardia:'#7da3ba'};
-/* Drawn in this order so the legend reads as the concern ramp does. */
-const EVORDER = ['acceleration','early','variable','late','prolonged',
+/* Drawn in this order so the legend reads as the concern ramp does. Untyped
+   sits past the end of the ramp rather than inside it: it is grey because no
+   position on the ramp was earned, not because it earned a low one. */
+const EVORDER = ['acceleration','early','variable','late','prolonged','untyped',
                  'tachycardia','bradycardia','contraction'];
 const ELAB = {
   acceleration:'Acceleration', early:'Early decel', variable:'Variable decel',
-  late:'Late decel', prolonged:'Prolonged decel', contraction:'Contraction',
+  late:'Late decel', prolonged:'Prolonged decel', untyped:'Untyped decel',
+  contraction:'Contraction',
   tachycardia:'Tachycardia', bradycardia:'Bradycardia'};
 /* The mechanism each pattern is thought to reflect -- the reason the typing
    matters at all, and what the hover label says. Keyed by the detector's own
-   subtype. Decelerations it could not type are not exported at all, so there
-   is no grey catch-all here any more. */
+   subtype, so the two untyped kinds give their own reason: an untyped
+   deceleration is a real drop in the heart rate whose CAUSE could not be
+   attributed, and the hover has to say which of the two ways that happened. */
 const ETIO = {
   acceleration:'Intact autonomic response — reassuring',
   early:'Head compression → vagal reflex. Benign; mirrors the contraction',
   variable:'Cord compression. Context-dependent',
   late:'Uteroplacental insufficiency — concerning',
   prolonged:'Over three minutes — sustained interruption of supply, urgent',
+  uncertain:'Real deceleration, no type — no contraction to time it against, '
+    + 'so early / late / variable could not be decided',
+  suspected_loss:'Real deceleration, no type — the nadir is inferred from the '
+    + 'edges of a signal gap rather than measured',
   contraction:'Uterine contraction',
   tachycardia:'Baseline above 160 bpm for ten minutes or more',
   bradycardia:'Baseline below 110 bpm for ten minutes or more'};
@@ -375,6 +417,15 @@ const GUIDE='#151515', SECOND='#7b52c4';
 /* Plotly does not inherit the page font, so the charts have to be told. */
 const PLOT_FONT='Roboto, -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif';
 let META=null, REC=null, NOW=0, BASE_LO=0, LOGOR=[];
+/* The figure's x positions, in minutes before delivery. Lifted out of the
+   render so the drag handlers -- which live on the document, not on the
+   figure -- can turn a pixel into a minute without the render's scope. */
+let XS=[];
+/* The cursor dot's data position, published by the render for the hit test in
+   overDot(). The odds axis is a linear axis holding LOG odds -- its ticks are
+   relabelled 0.25x/0.5x/1x -- so `y` is a log-odds value and converts to a
+   pixel with a plain c2p, no log handling. */
+let DOT = null;
 /* The stretch of time the user has zoomed to, as [lo,hi] in minutes before
    delivery. Held outside drawFig so that moving the cursor never moves the
    axis, and so a zoom survives the redraw the next cursor move triggers.
@@ -388,15 +439,102 @@ let ZX=null;
 /* The x extent of the whole record, in data units. Written by drawFig. */
 let FIT=[0,1];
 
+/* WHICH FAMILIES THE SCORE IS ALLOWED TO USE.
+ *
+ * The contributions are additive in log-odds, so a family can be taken out of
+ * the score by subtracting its band: the curve, the waterfall, the chips and
+ * the table all follow from that one subtraction.
+ *
+ * SAY WHAT THIS IS AND IS NOT. It answers "what is left once this family's
+ * contribution is removed" -- it is NOT a model retrained without the family,
+ * which would redistribute that signal onto the remaining features rather than
+ * lose it. Two families a model leans on jointly will each look smaller here
+ * than a retrain would make the survivor.
+ *
+ * Maternal history starts off. Its nine inputs are fixed before the trace
+ * begins, so its contribution is close to a constant offset -- measured over
+ * 150 records it moves by a median of 0.085 in log-odds across a whole labour
+ * while sitting at 0.5x to 1.4x -- and that offset sits under every curve
+ * making the trace harder to read.
+ */
+const MH_GROUP = 'Maternal history';
+let OFF = new Set([MH_GROUP]);
+/* group -> the feature indices in it, resolved once META is loaded. */
+let GIDX = {};
+
+/* This record's log-odds curve with every switched-off band subtracted. */
+function curveOf(){
+  const drop = [...OFF].filter(g=>REC.phi_group && REC.phi_group[g]);
+  if(!drop.length) return REC.log_or.slice();
+  return REC.log_or.map((v,i)=>
+    v - drop.reduce((s,g)=>{ const c=REC.phi_group[g][i]; return s+(c==null?0:c); }, 0));
+}
+/* Per-feature contributions at minute t, with switched-off families zeroed --
+   so the bar, the chips and the table drop them without any of them needing to
+   know the rule. */
+function phiAt(t){
+  const p = REC.phi[t].slice();
+  OFF.forEach(g=>(GIDX[g]||[]).forEach(i=>{ p[i] = 0; }));
+  return p;
+}
+/* The bands to stack, in the same order, minus the switched-off ones. */
+function groupsOf(){ return REC.groups.filter(g=>!OFF.has(g)); }
+
+/* THE RECORD LIST HAS TO ANSWER TO THE SAME SWITCHES. `last` is the full-model
+   odds ratio at delivery; every family the reader has switched off has to come
+   back out of it, exactly as curveOf() does for the record on screen. Without
+   this the list showed -- and sorted by -- the full model while the page it
+   indexes showed a reduced one, and since maternal history is off by default
+   the two disagreed on first load: 7.27x in the list against 5.26x on the page.
+
+   One function, used by the list, the sort and the population anchor alike, so
+   the three cannot drift apart again. */
+function lastLogOr(r){
+  let v = Math.log(r.last);
+  if(r.glast) OFF.forEach(g=>{ const c = r.glast[g]; if(c!=null) v -= c; });
+  return v;
+}
+
+/* The switch list. Each row carries what that family is worth AT THE CURSOR,
+   so the decision to drop one is made against a number rather than a guess --
+   and the numbers move as you scrub. */
+function drawFamList(){
+  const box = document.getElementById('famlist');
+  if(!box || !REC) return;
+  box.innerHTML = REC.groups.map(g=>{
+    const c = FAM[g] || FAM.Other;
+    const v = (REC.phi_group[g] || [])[NOW];
+    const on = !OFF.has(g);
+    const mult = (v==null || !isFinite(v)) ? '—' : fmtx(Math.exp(v));
+    const col = (v==null || !isFinite(v)) ? 'var(--mut)' : (v>0 ? UP : DOWN);
+    return `<label class="check${on?'':' off'}">`
+         + `<input type="checkbox" data-g="${esc(g)}"${on?' checked':''}>`
+         + `<span class="sw" style="background:${c}"></span>`
+         + `<span>${esc(g)}</span>`
+         + `<span class="amt" style="color:${on?col:''}">${mult}</span>`
+         + '</label>';
+  }).join('');
+  box.querySelectorAll('input[data-g]').forEach(b=>b.onchange=()=>{
+    if(b.checked) OFF.delete(b.dataset.g); else OFF.add(b.dataset.g);
+    /* The list is sorted by the odds ratio it displays, and both now depend on
+       which families are on, so the whole list is rebuilt rather than just
+       relabelled -- otherwise the numbers update and the order does not. */
+    fillPicker();
+    redraw();
+  });
+}
+
 const logit = p => Math.log(p/(1-p));
 const fmtx  = v => v.toFixed(2)+'×';
 
 /* Baseline odds solved so the cohort's mean predicted risk equals the chosen
    prevalence. Same bisection the Python app does with brentq -- the mean of a
    sigmoid is not the sigmoid of a mean, so logit(prevalence) is not the answer. */
-function anchorOffset(lastLogOr, targetPct){
+/* `lastLo` is the array of per-record log odds at delivery. Named to keep clear
+   of lastLogOr(), the function that produces each of them. */
+function anchorOffset(lastLo, targetPct){
   const p = Math.min(Math.max(targetPct/100, 1e-6), 1-1e-6);
-  const mean = c => lastLogOr.reduce((s,v)=>s+1/(1+Math.exp(-(v+c))),0)/lastLogOr.length;
+  const mean = c => lastLo.reduce((s,v)=>s+1/(1+Math.exp(-(v+c))),0)/lastLo.length;
   let lo=-25, hi=25;
   for(let i=0;i<200;i++){ const m=(lo+hi)/2; if(mean(m)<p) lo=m; else hi=m; }
   return (lo+hi)/2;
@@ -443,6 +581,56 @@ function pctCell(p){
        + `<span style="display:inline-block;width:34px;height:6px;border-radius:3px;`
        + `background:linear-gradient(to right, ${col} ${n}%, var(--line) ${n}%)"></span></span>`;
 }
+/* COHORT DISTRIBUTION, one box plot per row. Whiskers reach the true min and
+   max rather than 1.5 IQR: this is a summary of a known, complete population --
+   every scored minute of every record -- not a sample being screened for
+   outliers, so there is nothing to exclude and the far end of the whisker is a
+   value some fetus actually had.
+
+   EACH ROW IS ON ITS OWN SCALE. The box spans that feature's own min..max, so
+   widths carry no meaning ACROSS rows -- two boxes of equal width are two
+   different quantities in two different units. What the column supports is the
+   comparison WITHIN a row: where this record's dot sits against the cohort it
+   came from. That is also why the dot is the only coloured thing here, and why
+   it takes the same red/green as the Multiplier beside it.
+
+   Returns quartiles alongside the markup so the row tooltip can print the
+   numbers the picture only shows. */
+function boxCell(f, v, phi){
+  const g = META.pctgrid && META.pctgrid[f];
+  const none = {html:'<span style="color:var(--mut)">—</span>', q:null};
+  if(!g) return none;
+  const q = [0,25,50,75,100].map(k=>g[k]);
+  if(q.some(x=>x==null || !isFinite(x))) return none;
+  const [lo,q1,med,q3,hi] = q;
+  const W=132, H=18, P=6, SPAN=W-2*P, cy=H/2;
+  /* A feature that never varies -- every value identical -- has no distribution
+     to draw. Mapping it would divide by zero, so it gets a single tick. */
+  const flat = !(hi>lo);
+  const X = t => flat ? P+SPAN/2 : P + (Math.max(lo,Math.min(hi,t))-lo)/(hi-lo)*SPAN;
+  let m = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" `
+        + `style="display:block;overflow:visible" aria-hidden="true">`;
+  if(!flat){
+    m += `<line x1="${X(lo)}" x2="${X(hi)}" y1="${cy}" y2="${cy}" `
+       + `stroke="var(--ink3)" stroke-width="1"/>`;
+    [lo,hi].forEach(t=>{ m += `<line x1="${X(t)}" x2="${X(t)}" y1="${cy-3.5}" `
+       + `y2="${cy+3.5}" stroke="var(--ink3)" stroke-width="1"/>`; });
+    /* Floored at 1px: an interquartile range narrower than a pixel is still a
+       box, and a zero-width rect would vanish and read as missing data. */
+    const bw = Math.max(1, X(q3)-X(q1));
+    m += `<rect x="${X(q1)}" y="${cy-5}" width="${bw}" height="10" rx="2" `
+       + `fill="var(--warm)" stroke="var(--ink3)" stroke-width="1"/>`;
+  }
+  m += `<line x1="${X(med)}" x2="${X(med)}" y1="${cy-5.5}" y2="${cy+5.5}" `
+     + `stroke="var(--ink)" stroke-width="2"/>`;
+  /* No dot when the value was never measured: the distribution is still worth
+     showing, but there is nothing of this record's to place on it. */
+  if(v!=null && isFinite(v))
+    m += `<circle cx="${X(v)}" cy="${cy}" r="4" fill="${phi>0?UP:DOWN}" `
+       + `stroke="var(--panel)" stroke-width="1.5"/>`;
+  return {html:m+'</svg>', q:[lo,q1,med,q3,hi]};
+}
+
 function label(f){ const d=META.doc[f]; return d? d[0] : f.replace(/_/g,' '); }
 function unit(f){ const d=META.doc[f]; return d? d[1] : ''; }
 function meaning(f){ const d=META.doc[f]; return d? d[2] : ''; }
@@ -518,6 +706,15 @@ async function boot(){
   syncZoomUi();
 
   META = await (await fetch('data/index.json')).json();
+  /* Resolved from META rather than from the feature names, so a feature moved
+     between groups in Python needs no change here. */
+  GIDX = {};
+  META.groups.forEach((g,i)=>{ (GIDX[g] = GIDX[g] || []).push(i); });
+  document.getElementById('famall').onclick = ev=>{
+    ev.preventDefault();
+    OFF.clear(); redraw();
+  };
+
   const ps = document.getElementById('preset');
   Object.entries(META.prevalence_presets).forEach(([k,v])=>{
     const o=document.createElement('option'); o.value=v; o.textContent=k; ps.appendChild(o);});
@@ -560,25 +757,64 @@ function currentList(){
       return d*(a.ph-b.ph) || a.id-b.id;
     });
   }
-  else L.sort((a,b)=> so==='hi' ? b.last-a.last : a.last-b.last);
+  /* Sorted by the same figure the row displays, not by the full model. */
+  else L.sort((a,b)=> so==='hi' ? lastLogOr(b)-lastLogOr(a)
+                                : lastLogOr(a)-lastLogOr(b));
   return L;
 }
 /* The odds ratio the list shows has to be the same number the headline shows
    for the record you then open, so it goes through the same anchor -- which
    moves with the prevalence slider. Cheap enough to recompute (one bisection
    over ~36 records), and it keeps a single definition of "odds ratio". */
+function baseLo(){
+  if(!META) return 0;
+  const prev = +document.getElementById('prev').value;
+  /* Anchored on the distribution the page is SHOWING. Calibrating 'a typical
+     birth is 1x' against the full model while displaying a reduced curve puts
+     every ratio on the page against a baseline nothing on it uses. */
+  return anchorOffset(META.records.map(lastLogOr), prev);
+}
 function currentAnchor(){
   if(!META) return 0;
   const prev = +document.getElementById('prev').value;
-  return anchorOffset(META.records.map(r=>Math.log(r.last)), prev) - logit(prev/100);
+  return baseLo() - logit(prev/100);
+}
+/* THE PREDICTION AS A PROBABILITY. The odds ratio says how this record compares
+   with a typical birth; this says what the model actually thinks the chance of
+   an acidaemic cord gas is. Same number, different question, and the ratio
+   cannot answer the second one on its own -- it needs the reference population,
+   which is what baseLo carries. Moves with the prevalence field, as it must:
+   the same trace in a higher-risk population is a higher probability. */
+function riskOf(r, lo){
+  return 1 / (1 + Math.exp(-(lastLogOr(r) + (lo==null ? baseLo() : lo))));
+}
+function fmtRisk(p){ return (100*p).toFixed(0)+'%'; }
+
+/* THE YES / NO CALL. A threshold on the log odds, computed once in the export
+   at Youden's J and shipped in the index -- so the answer is a property of the
+   model, not of the reference population the reader happens to have selected.
+   Pushing the prevalence up does not turn the model's mind; it changes what a
+   given score means in absolute terms, which is what the percentage is for. */
+function callsYes(r){
+  const yd = META && META.youden;
+  return yd ? lastLogOr(r) >= yd.cut : null;
 }
 
 function fillPicker(){
   const L=currentList(), box=document.getElementById('picker');
-  document.getElementById('pickcap').textContent =
-    `${L.length} record${L.length===1?'':'s'} — click a line`;
+  /* A yes/no is meaningless without the threshold behind it, so the caption
+     states the operating point every time the badge is on screen. */
+  const yd = META && META.youden;
+  document.getElementById('pickcap').innerHTML =
+    `${L.length} record${L.length===1?'':'s'} — click a line`
+    + (yd ? `<br><b>YES/no</b> is the model's call at delivery, at the `
+            + `Youden-optimal cut-off (sensitivity ${yd.sens.toFixed(2)}, `
+            + `specificity ${yd.spec.toFixed(2)}, ${yd.n_yes} of ${yd.n} records `
+            + `called YES). The dot is the measured outcome.` : '');
   box.innerHTML='';
-  const a = Math.exp(currentAnchor());
+  /* Both computed once for the whole list -- each is a bisection over every
+     record, and doing it per row would be 512 of them. */
+  const lo = baseLo(), a = Math.exp(lo - logit((+document.getElementById('prev').value)/100));
   L.forEach(r=>{
     const d=document.createElement('div');
     d.className='row'; d.dataset.id=r.id;
@@ -586,12 +822,23 @@ function fillPicker(){
     const bits = [];
     if(r.ph!=null) bits.push(`pH ${r.ph.toFixed(2)}`);
     if(r.dur!=null) bits.push(`${r.dur}m`);
-    const or = r.last * a;
+    const or = Math.exp(lastLogOr(r)) * a;
     const oc = or>1 ? UP : DOWN;
-    d.innerHTML = `<span class="dot" style="background:${col}"></span>`
+    const yes = callsYes(r), p = riskOf(r, lo);
+    /* The call sits beside the measured outcome dot, so a disagreement between
+       what the model said and what happened is one glance rather than two. */
+    const callTip = yes==null ? '' :
+      `the model predicts ${yes?'ACIDAEMIA':'no acidaemia'} at delivery `
+      + `(predicted risk ${fmtRisk(p)}); the dot on the left is what actually `
+      + `happened`;
+    d.innerHTML = `<span class="dot" style="background:${col}" `
+                + `title="${r.y?'Acidaemic':'Not acidaemic'} — the measured outcome"></span>`
                 + `<span class="rid">${r.id}</span>`
                 + `<span class="or" title="odds ratio at delivery" `
                 + `style="background:${oc}1f;color:${oc}">${fmtx(or)}</span>`
+                + (yes==null ? ''
+                   : `<span class="call ${yes?'y':'n'}" title="${callTip}">`
+                     + `${yes?'YES':'no'}</span>`)
                 + `<span class="meta">${bits.join(' · ')}</span>`;
     d.onclick=()=>load(r.id); box.appendChild(d);
   });
@@ -602,15 +849,28 @@ function fillPicker(){
    follow. Rewriting the text in place rather than rebuilding the rows keeps
    the scroll position and the selection where the user left them. */
 function refreshPickerOr(anchor){
-  const a = Math.exp(anchor==null ? currentAnchor() : anchor);
+  const prev = +document.getElementById('prev').value;
+  /* The caller passes the anchor it already computed; the absolute risk needs
+     the base log-odds behind it, which is that anchor plus the logit it had
+     subtracted. Recovering it rather than recomputing keeps the list's
+     percentage and the headline's identical to the last decimal. */
+  const lo = (anchor==null) ? baseLo() : anchor + logit(prev/100);
+  const a = Math.exp(lo - logit(prev/100));
   const by = {}; (META.records||[]).forEach(r=>{ by[r.id]=r; });
   document.querySelectorAll('#picker .row').forEach(d=>{
     const r = by[+d.dataset.id], el = d.querySelector('.or');
     if(!r || !el) return;
-    const or = r.last * a, oc = or>1 ? UP : DOWN;
+    const or = Math.exp(lastLogOr(r)) * a, oc = or>1 ? UP : DOWN;
     el.textContent = fmtx(or);
     el.style.background = oc+'1f';
     el.style.color = oc;
+    /* The call is anchor-independent, so only its tooltip -- which quotes the
+       absolute risk -- has to follow the prevalence field. */
+    const cl = d.querySelector('.call');
+    if(cl) cl.title = `the model predicts `
+      + `${callsYes(r)?'ACIDAEMIA':'no acidaemia'} at delivery `
+      + `(predicted risk ${fmtRisk(riskOf(r, lo))}); the dot on the left is `
+      + `what actually happened`;
   });
 }
 function mark(id){
@@ -623,7 +883,7 @@ function mark(id){
 
 async function load(id){
   REC = await (await fetch(`data/rec_${id}.json`)).json();
-  LOGOR = REC.log_or;
+  LOGOR = curveOf();
   NOW = LOGOR.length-1;      // opens at delivery; click the curve to move it
   ZX  = null;                // a new record starts fully zoomed out
   const sc = document.getElementById('cursor');
@@ -698,7 +958,7 @@ function figGeom(){
   const gd = document.getElementById('fig');
   const fl = gd && gd._fullLayout;
   if(!fl || !fl._size || !fl.xaxis || fl.xaxis._offset==null) return null;
-  return {gd, sz:fl._size, xa:fl.xaxis, bb:gd.getBoundingClientRect()};
+  return {gd, sz:fl._size, xa:fl.xaxis, ya:fl.yaxis, bb:gd.getBoundingClientRect()};
 }
 function inPlot(g, ev){
   const px = ev.clientX-g.bb.left, py = ev.clientY-g.bb.top;
@@ -714,22 +974,127 @@ let PAN = null;
 /* Outlives PAN on purpose: click fires after mouseup, and it is what tells a
    pan apart from a click on the curve. */
 let PANNED = false;
+let SCRUB = false, scrubPending = null;
+
+/* The minute under the pointer. `loose` ignores the plot rectangle and clamps
+   to its horizontal edges instead, which is what a drag in progress wants: the
+   pointer wanders above the panels and past the last minute, and a cursor that
+   stalls whenever it leaves the box feels broken rather than bounded. */
+function minuteAt(ev, loose){
+  const g = figGeom();
+  if(!g || !XS.length) return null;
+  let px = loose ? Math.max(g.sz.l, Math.min(g.sz.l + g.sz.w,
+                                             ev.clientX - g.bb.left))
+                 : inPlot(g, ev);
+  if(px==null) return null;
+  const dx = g.xa.p2d(px - g.xa._offset);
+  let best=0, bd=Infinity;
+  XS.forEach((v,i)=>{ const d=Math.abs(v-dx); if(d<bd){bd=d;best=i;} });
+  return best;
+}
+
+/* Coalesced to one frame, for the same reason the slider is: a redraw is two
+   Plotly.react calls plus a table rebuild, and a drag fires on every pixel. */
+function scrubTo(ev){
+  const i = minuteAt(ev, true);
+  if(i==null) return;
+  if(scrubPending!==null){ scrubPending = i; return; }
+  scrubPending = i;
+  requestAnimationFrame(()=>{ const t=scrubPending; scrubPending=null; setNow(t); });
+}
+
+/* IS THE POINTER ON THE DOT? The dot is what gets dragged; everywhere else on
+   the figure is the pan surface, so the two gestures are told apart by where
+   the press landed rather than by a modifier. Generous by a few pixels on
+   purpose -- the dot is 15px across and the thing being grabbed is small
+   enough that an exact hit test would feel like it was refusing. */
+const DOT_HIT_PX = 15;
+function overDot(ev){
+  const g = figGeom();
+  if(!g || !DOT || !g.ya || g.ya._offset==null) return false;
+  const dx = ev.clientX - g.bb.left - (g.xa._offset + g.xa.c2p(DOT.x));
+  const dy = ev.clientY - g.bb.top  - (g.ya._offset + g.ya.c2p(DOT.y));
+  return dx*dx + dy*dy <= DOT_HIT_PX*DOT_HIT_PX;
+}
+
+/* Which family's band is under the pointer, or null. The risk panel is the top
+   of three that share the x axis, so the y pixel is tested against the risk
+   axis's own span rather than against inPlot's rectangle, which covers all
+   three -- otherwise pointing at the FHR trace names whichever band happens to
+   sit at that height above it. */
+function bandAt(ev){
+  const g = figGeom();
+  if(!g || !BANDS || !g.ya || g.ya._offset==null) return null;
+  if(inPlot(g, ev)==null) return null;
+  const py = ev.clientY - g.bb.top - g.ya._offset;
+  if(py < 0 || py > g.ya._length) return null;
+  const t = minuteAt(ev, false);
+  if(t==null || !BANDS.st.lo[t]) return null;
+  const yd = g.ya.p2d(py);
+  const lo = BANDS.st.lo[t], hi = BANDS.st.hi[t];
+  for(let j=0;j<BANDS.G.length;j++){
+    /* min/max rather than lo<=y<=hi: a lowering band is stacked downwards, so
+       its hi is the SMALLER number. */
+    if(yd >= Math.min(lo[j],hi[j]) && yd <= Math.max(lo[j],hi[j]) && BANDS.P[j][t]!==0)
+      return {name:BANDS.G[j], phi:BANDS.P[j][t]};
+  }
+  return null;
+}
+/* A swatch rather than colouring the name: the tip is near-black, and four of
+   the families are dark enough that their own colour on it fails contrast --
+   Signal quality is a deep indigo. The swatch reads at any luminance and is the
+   same square the legend uses. */
+function showBandTip(b, ev){
+  const tip = document.getElementById('tip');
+  const c = FAM[b.name] || FAM.Other;
+  const dir = b.phi > 0 ? 'raises risk' : 'lowers risk';
+  tip.innerHTML =
+    `<b><span style="display:inline-block;width:10px;height:10px;border-radius:2px;`
+    + `background:${c};margin-right:7px"></span>${esc(b.name)}</b>`
+    + `<div class="u">${dir} &mdash; &times;${Math.exp(b.phi).toFixed(2)} at this minute</div>`;
+  tip.classList.add('on');
+  placeTip(tip, ev);
+}
+function hideBandTip(){
+  const tip = document.getElementById('tip');
+  if(tip) tip.classList.remove('on');
+}
+
+/* GRAB THE DOT TO MOVE IT; DRAG ANYWHERE ELSE TO PAN.
+   A press on the dot scrubs the cursor and the score follows the pointer. A
+   press anywhere else in the figure pans, as it always did, and a press that
+   does not travel still reads as a click on that minute. Making the bare drag
+   scrub everywhere took the pan away from the whole panel to serve one small
+   target; the dot is the handle, so the dot is what carries the gesture. */
 function panStart(ev){
   const g = figGeom();
   if(!g || inPlot(g, ev)==null) return;
-  const v = viewX();
-  PAN = {x0:ev.clientX, lo:v[0], hi:v[1], len:g.xa._length};
-  PANNED = false;
-  document.body.classList.add('panning');
+  if(overDot(ev)){
+    SCRUB = true;
+    document.body.classList.add('scrubbing');
+  } else {
+    const v = viewX();
+    PAN = {x0:ev.clientX, lo:v[0], hi:v[1], len:g.xa._length};
+    PANNED = false;
+    document.body.classList.add('panning');
+  }
   ev.preventDefault();                       // no text selection mid-drag
 }
 function panMove(ev){
+  if(SCRUB){ scrubTo(ev); return; }
   if(!PAN || !PAN.len) return;
   if(Math.abs(ev.clientX - PAN.x0) > 3) PANNED = true;
   const d = -(ev.clientX - PAN.x0) * (PAN.hi-PAN.lo) / PAN.len;
   applyX(PAN.lo + d, PAN.hi + d);
 }
-function panEnd(){ PAN = null; document.body.classList.remove('panning'); }
+function panEnd(){
+  PAN = null; SCRUB = false;
+  document.body.classList.remove('panning');
+  document.body.classList.remove('scrubbing');
+}
+/* Cleared on mouseup as well: a drag that ends off the figure never fires
+   mouseleave, and the grab cursor would stick until the pointer went back. */
+document.addEventListener('mouseup', ()=> document.body.classList.remove('ondot'));
 
 /* Wheel zoom, anchored under the pointer rather than on the cursor: the point
    you are pointing at is the point you mean to magnify. Scaled by the actual
@@ -767,21 +1132,24 @@ function setNow(i){
 
 function redraw(){
   if(!REC) return;
+  LOGOR = curveOf();          // the toggle can change it between redraws
   const prev = +document.getElementById('prev').value;
-  const lastOf = META.records.map(r=>Math.log(r.last));
+  const lastOf = META.records.map(lastLogOr);
   BASE_LO = anchorOffset(lastOf, prev);
   const anchor = BASE_LO - logit(prev/100);
-  document.getElementById('basecap').textContent =
-    `A typical record carries odds ${Math.exp(BASE_LO).toFixed(3)} to 1 ` +
-    `(${(100/(1+Math.exp(-BASE_LO))).toFixed(1)}% risk). Ratios are measured ` +
-    `against a typical birth in this population, so they move when you change it.`;
-
   const s = LOGOR.map(v=>v+anchor);
   const orNow = Math.exp(s[NOW]);
   const tbd   = REC.tbd_min[NOW];
   const atNow = NOW===LOGOR.length-1 ? 'at delivery'
               : `at minute ${REC.t_min[NOW]} (−${tbd.toFixed(0)} min)`;
 
+  /* The outcome badge alone. The signal-quality caveats used to sit beside it
+     as amber chips and were taken out: three of them fired together on the
+     records that need them most, and a row of warnings next to the outcome
+     reads as an argument with it. What they said is still on the page, where
+     the reader is already looking -- the interpolated baseline draws dotted
+     over a grey band on the strip, and the coverage numbers ride on `cov` in
+     the record file. */
   document.getElementById('title').innerHTML =
     `<img src="logo.png" alt="Omega" style="height:64px;width:auto">` +
     `Record ${REC.record_id}<span class="badge ${REC.hypoxia?'bad':'ok'}">` +
@@ -789,6 +1157,7 @@ function redraw(){
     '</span>';
   document.getElementById('scrublab').textContent =
     `${fmtx(orNow)} ${atNow}`;
+  drawFamList();
   refreshPickerOr(anchor);
   drawMeta();
   drawBar(anchor, orNow, atNow);
@@ -837,11 +1206,26 @@ function drawMeta(){
 }
 
 function segments(topk){
-  const phi = REC.phi[NOW], F = META.feat_cols;
-  const idx = phi.map((v,i)=>i).sort((a,b)=>Math.abs(phi[b])-Math.abs(phi[a]));
+  const phi = phiAt(NOW), F = META.feat_cols;
+  /* SWITCHED-OFF FAMILIES ARE DROPPED, NOT RANKED WITH A ZERO. phiAt() zeroes
+     them so the bar's arithmetic stays right, but zero is still a magnitude to
+     sort by: with one family left on, features the reader had just switched off
+     sorted into the top six and filled the chip row with 1.00x terms. Nothing
+     is lost by removing them here -- they contribute nothing to the total
+     either way, so the product the row spells out is unchanged. */
+  const idx = phi.map((v,i)=>i)
+                 .filter(i=>!OFF.has(META.groups[i]))
+                 .sort((a,b)=>Math.abs(phi[b])-Math.abs(phi[a]));
   const keep = idx.slice(0,topk), rest = idx.slice(topk);
-  const segs = keep.map(i=>({phi:phi[i], name:label(F[i]),
-     sub:`${REC.X[NOW][i]} ${unit(F[i])} — ${pctLabel(cohortPct(REC.X[NOW][i], META.pctgrid[F[i]]))}`}));
+  /* A feature can be UNKNOWN rather than zero -- the pipeline refuses to state
+     a rate from a channel that was barely recorded. The model still routes a
+     missing value down a branch and SHAP still charges it a contribution, so
+     the term belongs on the chip row; what it must not do is show a blank where
+     a measurement would be and let it read as a number nobody bothered to
+     print. */
+  const segs = keep.map(i=>({phi:phi[i], name:label(F[i]), miss:REC.X[NOW][i]==null,
+     sub: REC.X[NOW][i]==null ? 'not measured — channel too sparse'
+        : `${REC.X[NOW][i]} ${unit(F[i])} — ${pctLabel(cohortPct(REC.X[NOW][i], META.pctgrid[F[i]]))}`}));
   [[1,'raising'],[-1,'lowering']].forEach(([sg,w])=>{
     const mem = rest.filter(i=>Math.sign(phi[i])===sg)
                     .sort((a,b)=>Math.abs(phi[b])-Math.abs(phi[a]));
@@ -906,7 +1290,11 @@ function drawBar(anchor, orNow, atNow){
     if(v>=loL-pad && v<=hiL+pad){ ticks.push(v); tt.push(Math.pow(2,k)+'x'); } }
   ann.push({x:total,y:1.02,yref:'paper',text:`<b>${fmtx(orNow)}</b>`,showarrow:false,
             xanchor:'center',yanchor:'bottom',font:{size:20,color:'#111'}});
-  if(anchor>=loL-pad && anchor<=hiL+pad)
+  /* Switch most families off and the blocks that remain move the odds barely at
+     all, so the total comes to rest on top of the base value and the two labels
+     print over each other. The total is the one that has to survive. */
+  const drawn = (hiL+pad) - (loL-pad);
+  if(anchor>=loL-pad && anchor<=hiL+pad && Math.abs(anchor-total) > 0.08*drawn)
     ann.push({x:anchor,y:1.02,yref:'paper',text:'base value',showarrow:false,
               xanchor:'center',yanchor:'bottom',font:{size:13,color:'#888'}});
   ann.push({x:0,y:1.34,xref:'paper',yref:'paper',xanchor:'left',showarrow:false,
@@ -951,7 +1339,15 @@ function drawChips(segs, anchor, orNow, atNow){
      as a factor invited the question of why a "typical birth" multiplies
      anything. The row therefore shows the feature terms only, and the product
      of what is displayed falls short of the total by exactly that anchor. */
-  segs.slice().sort((a,b)=>Math.abs(a.phi)-Math.abs(b.phi))
+  /* Sorted on the SIGNED contribution, so the printed numbers run upward:
+     every lowerer first, hardest first, then every raiser, and the row ends on
+     the single term that pushed the score up most -- next to the total it
+     helped produce. Sorting on |phi| instead ordered by strength while
+     ignoring direction, which alternated the colours (0.90, 0.88, 1.15, 1.16,
+     0.85 ...) and read as no order at all -- the numbers are what a reader
+     scans, and they have to move one way. It also lands each pooled chip among
+     its own kind rather than mid-run. */
+  segs.slice().sort((a,b)=>a.phi-b.phi)
       .forEach(s=>add(Math.exp(s.phi), s.name, s.sub, s.phi>0?'':'dn', s));
   box.lastChild.textContent='=';
   const d=document.createElement('div'); d.className='chipbox';
@@ -960,6 +1356,12 @@ function drawChips(segs, anchor, orNow, atNow){
   bindTips(box, '[data-pool]', (tip, el)=>{ tip.innerHTML = el.dataset.pool; });
 }
 
+/* The stack as drawn, kept for hit-testing. Plotly's own hoveron:'fills' does
+   name a band, but it parks the label at the polygon's CENTROID -- for a band
+   that runs the width of the recording that is halfway across the chart, nowhere
+   near the pointer, and the reader cannot tell which of six slivers it belongs
+   to. So the bands stay hoverinfo:'skip' and the tip is placed here instead. */
+let BANDS = null;
 function bandStack(P, base){
   const T=P[0].length, G=P.length;
   const lo=[], hi=[], s=[];
@@ -981,10 +1383,15 @@ function bandStack(P, base){
 
 function drawFig(s){
   const x = REC.tbd_min.map(v=>-v);
-  const G = REC.groups;
+  XS = x;
+  const G = groupsOf();
   const P = G.map(g=>REC.phi_group[g].map(v=>v==null?0:v));
-  const anchorBase = s[0]-REC.log_or[0];
+  /* Against LOGOR, not REC.log_or: with maternal history switched off the two
+     differ by exactly the offset that was removed, and using the raw curve
+     here would put the bands back where the removed group had them. */
+  const anchorBase = s[0]-LOGOR[0];
   const st = bandStack(P, anchorBase);
+  BANDS = {G, st, P};
   const traces=[];
   /* The WHOLE curve is drawn, always. Truncating it at the cursor made every
      click look like the chart was collapsing; the cursor marks a moment, it
@@ -1005,6 +1412,14 @@ function drawFig(s){
   G.forEach((g,j)=>{
     const c = FAM[g]||FAM.Other;
     const lo = st.lo.map(r=>r[j]), hi = st.hi.map(r=>r[j]);
+  /* Hovering a band names its family. The colours are the one part of this
+     chart with no label on them -- the legend is a row of ten swatches above a
+     stack that can be six bands deep, and matching a sliver back to its swatch
+     by eye is exactly the step a reader should not have to do. hoveron:'fills'
+     rather than a point hover because a band is an AREA: the reader is pointing
+     at a region of colour, not at one of the 2N vertices of its outline.
+     Direction rides along, since the hatch that carries it is easy to miss on a
+     thin band. */
     const band = (keep, extra) => Object.assign({
       x:x.concat(x.slice().reverse()),
       y:lo.concat(hi.map((v,t)=> keep(P[j][t]) ? v : lo[t]).reverse()),
@@ -1028,18 +1443,33 @@ function drawFig(s){
     customdata:st.s.map(v=>Math.exp(v)),
     hovertemplate:'%{x:.0f} min before delivery<br><b>%{customdata:.2f}×</b>'+
                   '<br><i>click to read this minute</i><extra></extra>'});
+  DOT = {x:x[NOW], y:st.s[NOW]};
   traces.push({x:[x[NOW]],y:[st.s[NOW]],mode:'markers',showlegend:false,type:'scatter',
-    xaxis:'x',yaxis:'y',marker:{size:15,color:Math.exp(st.s[NOW])>1?UP:DOWN,
+    /* ALWAYS RED. This dot marks WHERE THE READER IS on the risk curve, not
+       whether the risk under it is good news. Colouring it green below 1.0x
+       made the score read as reassuring at the exact moment it was being
+       inspected, and put a green dot at the end of a curve whose total chip is
+       red -- two colours for one number. Direction is already carried by the
+       bands, the chips and the hatching; the cursor carries position only,
+       which is why setNow has called it "the red dot" since it was written. */
+    xaxis:'x',yaxis:'y',marker:{size:15,color:UP,
     line:{color:'#fff',width:2.5}},hoverinfo:'skip'});
 
   const rows = REC.strip ? 3 : 1;
   const shapes=[];
-  let ucRange=null;
+  let ucRange=null, gaps=[], inGap=()=>false;
   if(REC.strip){
     /* The UC panel's y range is pinned rather than autoranged so a contraction
        band can be drawn in data coordinates and still fill the panel exactly. */
     const ucv = REC.strip.uc.filter(v=>v!=null);
     ucRange = [Math.min(0, ...ucv), (ucv.length?Math.max(...ucv):100)*1.04];
+
+    /* Spans, in minutes before delivery, where the baseline is interpolated
+       rather than measured -- see baseline_gaps() in export_static_site.py.
+       Older record files predate the field, so an absent one means "no gaps
+       known", not "no gaps": the strip then draws exactly as it used to. */
+    gaps = REC.strip.base_gap || [];
+    inGap = x => x!=null && gaps.some(([a,b])=> x>=a && x<=b);
 
     /* Every detected event is a filled band drawn as a TRACE, not a shape.
        Shapes cannot carry hover, and the whole span has to answer to the
@@ -1050,28 +1480,77 @@ function drawFig(s){
     (REC.events||[]).forEach(e=>{
       const uc = e.d==='contraction', col = EVC[e.d]||'#bbb';
       const [y0,y1] = uc ? ucRange : (BAND_Y[e.d] || FHR_RANGE);
+      /* An untyped deceleration is drawn as an OPEN band -- dotted outline,
+         fainter fill -- so it does not read as a fifth deceleration type
+         sitting quietly beside the four real ones. The mark says a drop was
+         found here and left unnamed. */
+      const open = e.d==='untyped';
       traces.push({
         x:[e.a,e.a,e.b,e.b,e.a], y:[y0,y1,y1,y0,y0],
         type:'scatter', mode:'lines', fill:'toself',
-        fillcolor:rgba(col, uc?.20:.26), line:{width:0},
+        fillcolor:rgba(col, uc?.20:(open?.14:.26)),
+        line:open ? {width:1.1, color:rgba(col,.7), dash:'dot'} : {width:0},
         hoveron:'fills', hoverinfo:'text', text:evLabel(e),
         name:ELAB[e.d]||e.d, legendgroup:e.d, showlegend:false,
         hoverlabel:{bgcolor:'#fff',bordercolor:col,font:{color:'#111'}},
         xaxis:uc?'x3':'x2', yaxis:uc?'y3':'y2'});
     });
 
+    /* WHERE THE BASELINE IS A GUESS. Drawn before the signals, in the same
+       band idiom as the events so it answers to the cursor, and in grey
+       because it is not a finding about the fetus -- it is the absence of one.
+       The band matters as much as the dotted line does: across a long dropout
+       the interpolated baseline is FLAT, and a flat line is exactly what a
+       reassuring baseline looks like. */
+    gaps.forEach(([a,b])=>{
+      traces.push({
+        x:[a,a,b,b,a], y:[FHR_RANGE[0],FHR_RANGE[1],FHR_RANGE[1],FHR_RANGE[0],FHR_RANGE[0]],
+        type:'scatter', mode:'lines', fill:'toself',
+        fillcolor:'rgba(130,128,122,.13)', line:{width:0},
+        hoveron:'fills', hoverinfo:'text',
+        text:`Baseline interpolated across ${(b-a).toFixed(0)} min<br>`
+            + `too little signal here to measure it`,
+        name:'baseline interpolated', legendgroup:'basegap', showlegend:false,
+        hoverlabel:{bgcolor:'#fff',bordercolor:'#82807a',font:{color:'#111'}},
+        xaxis:'x2', yaxis:'y2'});
+    });
+
     traces.push({x:REC.strip.x,y:REC.strip.fhr,mode:'lines',line:{color:'#ff2d6f',width:1},
                  name:'FHR',type:'scatter',xaxis:'x2',yaxis:'y2',showlegend:false,
                  hoverinfo:'skip'});
-    if(REC.strip.base)
+    if(REC.strip.base){
       /* Not just 'Baseline': the legend already carries a Baseline entry for
          the feature family. Drawn in that family's blue and heavy enough to
          read against the FHR trace -- it is the reference every event on this
-         panel was measured from, so it should not be the faintest line on it. */
-      traces.push({x:REC.strip.x,y:REC.strip.base,mode:'lines',
-        line:{color:FAM['Baseline'],width:2.4,dash:'dash'},name:'FHR baseline',
+         panel was measured from, so it should not be the faintest line on it.
+
+         TWO TRACES, NOT ONE. The stretches where the ten-minute median had too
+         little accepted signal to be computed are carried across from whatever
+         bounded them; they are a number, not a measurement, and drawing them in
+         the same stroke as the rest tells the reader the opposite. Measured
+         reads solid, guessed reads dotted and half-strength. */
+      const bm = REC.strip.base.map((v,i)=> inGap(REC.strip.x[i]) ? null : v);
+      traces.push({x:REC.strip.x,y:bm,mode:'lines',
+        line:{color:FAM['Baseline'],width:2.4},name:'FHR baseline',
         type:'scatter',xaxis:'x2',yaxis:'y2',showlegend:true,
+        connectgaps:false,
         hovertemplate:'baseline %{y:.0f} bpm<extra></extra>'});
+      if(gaps.length){
+        /* One sample of overlap at each edge, so the dotted run meets the solid
+           one instead of leaving a hairline of white between them. */
+        const bi = REC.strip.base.map((v,i)=>{
+          const x = REC.strip.x[i];
+          return (inGap(x) || inGap(REC.strip.x[i-1]) || inGap(REC.strip.x[i+1]))
+                 ? v : null;
+        });
+        traces.push({x:REC.strip.x,y:bi,mode:'lines',
+          line:{color:rgba(FAM['Baseline'],.55),width:2,dash:'dot'},
+          name:'baseline interpolated',
+          type:'scatter',xaxis:'x2',yaxis:'y2',showlegend:true,
+          legendgroup:'basegap', connectgaps:false,
+          hovertemplate:'baseline %{y:.0f} bpm (interpolated)<extra></extra>'});
+      }
+    }
     traces.push({x:REC.strip.x,y:REC.strip.uc,mode:'lines',line:{color:'#2f7fd0',width:1},
                  name:'UC',type:'scatter',xaxis:'x3',yaxis:'y3',showlegend:false,
                  hoverinfo:'skip'});
@@ -1089,6 +1568,9 @@ function drawFig(s){
     EVORDER.filter(t=>byType[t]).forEach(t=>{
       const evs = byType[t], acc = t==='acceleration', uc = t==='contraction';
       const zone = BAND_Y[t];
+      /* Open marker for the untyped decelerations, matching their open band. */
+      const open = t==='untyped';
+      const sym = zone ? 'square' : ((acc||uc) ? 'triangle-up' : 'triangle-down');
       traces.push({
         x:evs.map(e=>(e.a+e.b)/2),
         y:evs.map(()=> uc ? ucRange[0]
@@ -1096,8 +1578,9 @@ function drawFig(s){
                           : (acc ? FHR_RANGE[1]-8 : FHR_RANGE[0]+8)),
         mode:'markers', type:'scatter', name:ELAB[t]||t, legendgroup:t,
         xaxis:uc?'x3':'x2', yaxis:uc?'y3':'y2',
-        marker:{size:9,symbol:zone?'square':((acc||uc)?'triangle-up':'triangle-down'),
-                color:EVC[t]||'#bbb',line:{color:'#fff',width:1}},
+        marker:{size:9, symbol:open ? sym+'-open' : sym,
+                color:EVC[t]||'#bbb',
+                line:open ? {color:EVC[t],width:1.6} : {color:'#fff',width:1}},
         text:evs.map(evLabel), hoverinfo:'text',
         hoverlabel:{bgcolor:'#fff',bordercolor:EVC[t]||'#bbb',
                     font:{color:'#111'}}});
@@ -1158,6 +1641,20 @@ function drawFig(s){
   const onScreen = v => v>=xrange[0] && v<=xrange[1];
   const yrefOf = r => r===1?'y domain':(r===2?'y2 domain':'y3 domain');
   const xrefOf = r => r===1?'x':(r===2?'x2':'x3');
+
+  /* EVERYTHING AFTER THE CURSOR IS DIMMED. At minute t the score has seen only
+     what is left of the line; what lies to the right had not happened yet. The
+     whole recording is still drawn -- truncating it made every click look like
+     the chart was collapsing -- but a white scrim over the later part says
+     'not yet known' without removing the context that makes the moment
+     readable. Drawn before the cursor and the guides so those stay crisp on top
+     of it, and skipped at delivery, where there is no future to dim. */
+  if(x[NOW] < xrange[1] - 1e-9){
+    for(let r=1;r<=rows;r++) shapes.push({type:'rect', layer:'above',
+      xref:xrefOf(r), yref:yrefOf(r),
+      x0:x[NOW], x1:xrange[1], y0:0, y1:1,
+      fillcolor:'rgba(255,255,255,.62)', line:{width:0}});
+  }
 
   /* Three near-black vertical lines with nothing to tell them apart read as
      chart furniture. They are not: the dashed and dotted ones are the far edge
@@ -1250,18 +1747,30 @@ function drawFig(s){
   gd.onclick = ev=>{
     /* A drag is a pan, not a cursor move -- the click event fires on mouseup
        either way, so the two have to be told apart by how far the pointer
-       travelled. */
-    if(PANNED) return;
-    const g = figGeom();
-    if(!g) return;
-    const px = inPlot(g, ev);
+       travelled. A scrub ends here too, and must not be re-read: the pointer
+       has already placed the cursor on every frame of the drag. */
+    if(PANNED || SCRUB) return;
+    const i = minuteAt(ev, false);
     /* Outside the plotting rectangle is the legend, the axis titles and the
        margins -- clicking those should not move anything. */
-    if(px==null) return;
-    const dx = g.xa.p2d(px - g.xa._offset);
-    let best=0, bd=Infinity;
-    x.forEach((v,i)=>{ const d=Math.abs(v-dx); if(d<bd){bd=d;best=i;} });
-    setNow(best);
+    if(i!=null) setNow(i);
+  };
+  /* The dot is the only draggable thing on the figure, so it is the only thing
+     that may claim a grab cursor. Toggled on hover rather than baked into the
+     trace because Plotly redraws the marker on every cursor move. */
+  gd.onmousemove = ev=>{
+    if(PAN || SCRUB){ hideBandTip(); return; }   // a gesture already owns the cursor
+    const onDot = overDot(ev);
+    document.body.classList.toggle('ondot', onDot);
+    /* The dot wins. It is the one thing here that can be grabbed, and naming
+       the band under it would offer a read on the very pixel that is offering
+       a drag. */
+    const b = onDot ? null : bandAt(ev);
+    if(b) showBandTip(b, ev); else hideBandTip();
+  };
+  gd.onmouseleave = ()=>{
+    document.body.classList.remove('ondot');
+    hideBandTip();
   };
   /* Plotly no longer initiates any range change of its own, so the only thing
      left to catch is a double-click reset -- which autoranges, and autorange
@@ -1288,6 +1797,9 @@ const TCOLS = [
   {key:'val',   head:'Value',          num:true},
   {key:'pct',   head:'Cohort %ile',    num:true},
   {key:'med',   head:'Cohort median',  num:true},
+  /* Not sortable: a box plot has no single value to order rows by, and a
+     sortable header on it would promise one. */
+  {key:'dist',  head:'Cohort distribution', num:false, plain:true},
   {key:'mult',  head:'Multiplier',     num:true},
   {key:'phi',   head:'log-odds φ',     num:true},
 ];
@@ -1312,8 +1824,10 @@ let TWIN = 'all';   /* which window the table is filtered to */
 
 function tableRows(){
   const phi=REC.phi[NOW], F=META.feat_cols, X=REC.X[NOW];
+  /* Dropped outright rather than shown with a zero contribution: a row reading
+     0.000× would look like a finding about this record instead of a setting. */
   let rows = phi.map((v,i)=>({
-    i, cat: META.groups[i], feat: label(F[i]), unit: unit(F[i]),
+    i, f: F[i], cat: META.groups[i], feat: label(F[i]), unit: unit(F[i]),
     mean: meaning(F[i]), val: X[i], win: win(F[i]), winr: winRank(win(F[i])),
     pct: cohortPct(X[i], META.pctgrid[F[i]]),
     med: META.pctgrid[F[i]] ? META.pctgrid[F[i]][50] : null,
@@ -1322,6 +1836,7 @@ function tableRows(){
   /* Ranked over ALL features, then filtered: a rank is a feature's standing in
      the whole explanation, and renumbering 1..n inside a filtered view would
      claim the top row of "Last 30 min" is the record's strongest driver. */
+  rows = rows.filter(r=>!OFF.has(r.cat));
   rows.sort((a,b)=>Math.abs(b.phi)-Math.abs(a.phi));
   rows.forEach((r,k)=>r.rank=k+1);
   if(TWIN!=='all') rows = rows.filter(r=>r.win===TWIN);
@@ -1353,9 +1868,10 @@ function drawWinPills(){
   const box = document.getElementById('winpills');
   if(!box) return;
   const n = {};
-  META.feat_cols.forEach(f=>{ const w=win(f); n[w]=(n[w]||0)+1; });
+  const cols = META.feat_cols.filter((f,i)=> !OFF.has(META.groups[i]));
+  cols.forEach(f=>{ const w=win(f); n[w]=(n[w]||0)+1; });
   const spans = Object.keys(n).sort((a,b)=>winRank(a)-winRank(b));
-  box.innerHTML = [['all', 'All', META.feat_cols.length]]
+  box.innerHTML = [['all', 'All', cols.length]]
     .concat(spans.map(w=>[w, w, n[w]]))
     .map(([k,lab,c])=>`<button class="pill${TWIN===k?' on':''}" data-w="${esc(k)}">`
        + `${esc(lab)}<span class="n">${c}</span></button>`).join('');
@@ -1380,21 +1896,32 @@ function drawTable(){
     const arrow = on ? (TSORT.dir>0 ? ' ▲' : ' ▼') : '';
     /* `num` decides how the column sorts; `left` overrides how it is aligned,
        for the one column that sorts on a hidden numeric rank but shows text. */
+    if(c.plain) return `<th title="Whiskers span the cohort minimum and maximum, `
+         + `the box the 25th to 75th percentile, the heavy line the median. `
+         + `This record's value is the dot. Each row is scaled to its own `
+         + `feature, so widths are not comparable between rows.">${c.head}</th>`;
     return `<th class="${c.num&&!c.left?'num':''}${c.wrap?' wrap':''} sortable`
          + `${on?' on':''}" onclick="sortTable('${c.key}')">${c.head}${arrow}</th>`;
   }).join('');
   let h = `<table><tr>${head}</tr>`;
   rows.forEach(r=>{
     const c = FAM[r.cat]||FAM.Other;
+    const bx = boxCell(r.f, r.val, r.phi);
     h+=`<tr data-feat="${esc(r.feat)}" data-unit="${esc(r.unit||'')}"`
-     + ` data-win="${esc(r.win)}" data-mean="${esc(r.mean||'')}">`
+     + ` data-win="${esc(r.win)}" data-mean="${esc(r.mean||'')}"`
+     + ` data-q="${bx.q ? esc(bx.q.map(fmtNum).join('|')) : ''}">`
      + `<td class="num">${r.rank}</td>`
      + `<td><span style="background:${c}22;color:${c};border-radius:6px;padding:2px 7px;font-weight:600">${r.cat}</span></td>`
      + `<td><b>${r.feat}</b>${r.unit?` <span style="color:var(--ink3)">(${r.unit})</span>`:''}</td>`
      + `<td style="color:var(--mut)">${esc(r.win)}</td>`
-     + `<td class="num">${r.val==null?'':r.val}</td>`
+     + `<td class="num">${r.val==null
+          ? '<span class="miss" title="The channel this needs was too sparse in '
+            + 'this window to state a value. The model was given a missing value, '
+            + 'not a zero.">not measured</span>'
+          : r.val}</td>`
      + `<td class="num">${pctCell(r.pct)}</td>`
      + `<td class="num">${fmtNum(r.med)}</td>`
+     + `<td>${bx.html}</td>`
      + `<td class="num" style="color:${r.phi>0?UP:DOWN}">${r.mult.toFixed(3)}×</td>`
      + `<td class="num">${r.phi>0?'+':''}${r.phi.toFixed(4)}</td></tr>`;
   });
@@ -1423,6 +1950,17 @@ function fillTip(tip, d){
   if(d.mean){
     tip.appendChild(document.createElement('br'));
     tip.appendChild(document.createTextNode(d.mean));
+  }
+  /* The box plot's five numbers, spelled out. The picture answers "is this
+     record unusual"; a reader deciding anything on it wants the values. */
+  if(d.q){
+    const [lo,q1,med,q3,hi] = d.q.split('|');
+    tip.appendChild(document.createElement('br'));
+    const q = document.createElement('span');
+    q.className = 'u';
+    q.textContent = `cohort  min ${lo} · 25th ${q1} · median ${med}`
+                  + ` · 75th ${q3} · max ${hi}`;
+    tip.appendChild(q);
   }
 }
 
